@@ -1,0 +1,1167 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 스마트 업무 관리 서비스</title>
+  <!-- Main Stylesheet -->
+  <link rel="stylesheet" href="./style.css">
+  
+  <!-- Offline-ready Local Library Scripts -->
+  <script src="./lib/react.production.min.js"></script>
+  <script src="./lib/react-dom.production.min.js"></script>
+  <script src="./lib/babel.min.js"></script>
+</head>
+<body>
+
+  <!-- React Mount Point -->
+  <div id="root"></div>
+
+  <!-- React Application Logic -->
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    // Anchor Date for D-Day calculation as specified: 2026-07-04
+    const ANCHOR_DATE_STR = "2026-07-04";
+
+    // Initial Mock Seed Data
+    const INITIAL_TASKS = [
+      {
+        id: 1,
+        title: "예산안 제출",
+        dueDate: "2026-07-10",
+        priority: "높음",
+        status: "진행중",
+        assignee: "홍길동",
+        submissionMethod: "그룹웨어 결재 및 파일 업로드",
+        source: "대학 예산 수립 위원회 공문",
+        memo: "부서별 예산 조정안 반영 필요. 마감 엄수.",
+        createdAt: "2026-07-01",
+        updatedAt: "2026-07-01"
+      },
+      {
+        id: 2,
+        title: "회의자료 작성",
+        dueDate: "2026-07-09",
+        priority: "높음",
+        status: "해야함",
+        assignee: "이영희",
+        submissionMethod: "기획처 이메일 제출",
+        source: "기획처 학사운영팀",
+        memo: "대학 혁신 사업 추진 전략 회의 공유자료 취합.",
+        createdAt: "2026-07-01",
+        updatedAt: "2026-07-01"
+      },
+      {
+        id: 3,
+        title: "학생 공문 검토",
+        dueDate: "2026-07-11",
+        priority: "보통",
+        status: "해야함",
+        assignee: "김철수",
+        submissionMethod: "학사 행정 시스템 승인",
+        source: "학생지원팀 협조 요청",
+        memo: "동아리 연합 행사 관련 안전 계획서 확인 및 결재.",
+        createdAt: "2026-07-02",
+        updatedAt: "2026-07-02"
+      },
+      {
+        id: 4,
+        title: "보고서 작성",
+        dueDate: "2026-07-15",
+        priority: "낮음",
+        status: "완료",
+        assignee: "박민수",
+        submissionMethod: "시스템 직접 업로드",
+        source: "교무처 공지",
+        memo: "교원 업적 평가 기준 개선방안 보고서 작성 완료.",
+        createdAt: "2026-07-01",
+        updatedAt: "2026-07-03"
+      }
+    ];
+
+    // Helper: Parse date differences relative to 2026-07-04
+    function getDDayInfo(dueDateStr) {
+      if (!dueDateStr) return { text: "-", class: "dday-safe", value: 999 };
+      
+      const anchor = new Date(ANCHOR_DATE_STR);
+      const target = new Date(dueDateStr);
+      
+      // Calculate diff in days
+      const diffTime = target.getTime() - anchor.getTime();
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      
+      if (diffDays > 0) {
+        if (diffDays <= 3) {
+          return { text: `D-${diffDays}`, class: "dday-alert", value: diffDays };
+        } else if (diffDays <= 7) {
+          return { text: `D-${diffDays}`, class: "dday-warning", value: diffDays };
+        } else {
+          return { text: `D-${diffDays}`, class: "dday-safe", value: diffDays };
+        }
+      } else if (diffDays === 0) {
+        return { text: "D-Day", class: "dday-alert", value: 0 };
+      } else {
+        return { text: `D+${Math.abs(diffDays)}`, class: "dday-alert", value: diffDays };
+      }
+    }
+
+    // Mock AI analysis notice parser function
+    function mockAnalyzeNotice(text) {
+      const cleanText = text.trim();
+      
+      // Check if it's the target scenario notice
+      if (cleanText.includes("대학혁신지원사업") || cleanText.includes("성과보고서") || cleanText.includes("기획처")) {
+        return {
+          title: "대학혁신지원사업 성과보고서 제출",
+          dueDate: "2026-07-10",
+          assignee: "이영희",
+          priority: "높음",
+          submissionMethod: "기획처 이메일 제출 (planning@univ.ac.kr)",
+          source: "기획처 공지 (김철수)",
+          memo: "성과보고서 기한 엄수 제출 요망."
+        };
+      }
+      
+      // Generic parser fallback - heuristic parsing
+      let detectedTitle = "AI 분석 자동 업무";
+      let detectedDate = "2026-07-12"; // Default fallback
+      let detectedAssignee = "행정지원팀 담당자";
+      let detectedPriority = "보통";
+      let detectedSubmission = "이메일 또는 그룹웨어 제출";
+      let detectedSource = "공지사항 입력자";
+      let detectedMemo = "AI 분석을 통해 추출된 업무 내용입니다.";
+
+      // 1. Try to extract first line/sentence as title
+      const lines = cleanText.split('\n');
+      if (lines.length > 0 && lines[0].length < 35) {
+        detectedTitle = lines[0].replace(/[\[\]\-*]/g, '').trim();
+      }
+
+      // 2. Try to find a date pattern (YYYY-MM-DD or YYYY.MM.DD)
+      const dateRegex = /(\d{4})[-.](\d{2})[-.](\d{2})/;
+      const matchDate = cleanText.match(dateRegex);
+      if (matchDate) {
+        detectedDate = `${matchDate[1]}-${matchDate[2]}-${matchDate[3]}`;
+      }
+
+      // 3. Try to find priority words
+      if (cleanText.includes("높음") || cleanText.includes("긴급") || cleanText.includes("중요")) {
+        detectedPriority = "높음";
+      } else if (cleanText.includes("낮음") || cleanText.includes("여유")) {
+        detectedPriority = "낮음";
+      }
+
+      // 4. Try to find assignee names or keywords
+      const assigneeRegex = /담당자\s*:\s*([가-힣\s]{2,10})/;
+      const matchAssignee = cleanText.match(assigneeRegex);
+      if (matchAssignee) {
+        detectedAssignee = matchAssignee[1].trim();
+      }
+
+      // 5. Try to find email/submission info
+      const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/;
+      const matchEmail = cleanText.match(emailRegex);
+      if (matchEmail) {
+        detectedSubmission = `이메일 제출 (${matchEmail[1]})`;
+      }
+
+      // 6. Try to find sender/source
+      if (cleanText.includes("안녕하세요")) {
+        const senderMatch = cleanText.match(/([가-힣]{2,4})\s*(입니다|드림|올림)/);
+        if (senderMatch) {
+          detectedSource = `메일/공지 (${senderMatch[1]})`;
+        }
+      }
+
+      return {
+        title: detectedTitle,
+        dueDate: detectedDate,
+        assignee: detectedAssignee,
+        priority: detectedPriority,
+        submissionMethod: detectedSubmission,
+        source: detectedSource,
+        memo: cleanText.substring(0, 100) + (cleanText.length > 100 ? "..." : "")
+      };
+    }
+
+    // Main App Component
+    function App() {
+      // 1. Load tasks from local storage or set initial mock data
+      const [tasks, setTasks] = useState(() => {
+        const stored = localStorage.getItem("ai_tasks");
+        if (stored) {
+          try {
+            return JSON.parse(stored);
+          } catch(e) {
+            return INITIAL_TASKS;
+          }
+        }
+        return INITIAL_TASKS;
+      });
+
+      // Navigation state: 'dashboard' | 'ai-add' | 'detail' | 'progress'
+      const [currentScreen, setCurrentScreen] = useState("dashboard");
+      const [selectedTaskId, setSelectedTaskId] = useState(() => {
+        return INITIAL_TASKS[0]?.id || null;
+      });
+
+      // Filter and Search states
+      const [searchQuery, setSearchQuery] = useState("");
+      const [statusFilter, setStatusFilter] = useState("전체");
+
+      // Synchronize with localStorage
+      useEffect(() => {
+        localStorage.setItem("ai_tasks", JSON.stringify(tasks));
+      }, [tasks]);
+
+      // Handle Task Updates (e.g. from Detail Screen)
+      const handleUpdateTask = (id, updatedFields) => {
+        setTasks(prevTasks =>
+          prevTasks.map(t =>
+            t.id === id
+              ? { ...t, ...updatedFields, updatedAt: new Date().toISOString().split('T')[0] }
+              : t
+          )
+        );
+      };
+
+      // Handle Task Deletion
+      const handleDeleteTask = (id) => {
+        setTasks(prevTasks => prevTasks.filter(t => t.id !== id));
+        setCurrentScreen("dashboard");
+      };
+
+      // Handle New Task Insertion
+      const handleAddTask = (newTask) => {
+        const nextId = tasks.length > 0 ? Math.max(...tasks.map(t => t.id)) + 1 : 1;
+        const taskWithId = {
+          ...newTask,
+          id: nextId,
+          status: "해야함", // Default status
+          createdAt: new Date().toISOString().split('T')[0],
+          updatedAt: new Date().toISOString().split('T')[0]
+        };
+        setTasks(prev => [taskWithId, ...prev]);
+        setSelectedTaskId(nextId);
+      };
+
+      // Compute statistics for the dashboard/metrics cards
+      const stats = useMemo(() => {
+        const total = tasks.length;
+        const todo = tasks.filter(t => t.status === "해야함").length;
+        const doing = tasks.filter(t => t.status === "진행중").length;
+        const done = tasks.filter(t => t.status === "완료").length;
+        const completionRate = total > 0 ? Math.round((done / total) * 100) : 0;
+        
+        return { total, todo, doing, done, completionRate };
+      }, [tasks]);
+
+      return (
+        <div class="app-container">
+          {/* Header & Navigation Bar */}
+          <header class="navbar">
+            <div class="logo-section">
+              <div class="logo-icon">AI</div>
+              <div class="logo-text">스마트 업무 관리 서비스</div>
+            </div>
+            
+            <nav class="nav-links">
+              <button 
+                className={`nav-item ${currentScreen === 'dashboard' ? 'active' : ''}`}
+                onClick={() => setCurrentScreen("dashboard")}
+              >
+                업무 대시보드
+              </button>
+              <button 
+                className={`nav-item ${currentScreen === 'ai-add' ? 'active' : ''}`}
+                onClick={() => setCurrentScreen("ai-add")}
+              >
+                AI 업무 추가
+              </button>
+              <button 
+                className={`nav-item ${currentScreen === 'detail' ? 'active' : ''}`}
+                onClick={() => {
+                  if (selectedTaskId && tasks.some(t => t.id === selectedTaskId)) {
+                    setCurrentScreen("detail");
+                  } else if (tasks.length > 0) {
+                    setSelectedTaskId(tasks[0].id);
+                    setCurrentScreen("detail");
+                  } else {
+                    alert("상세히 볼 업무가 없습니다. AI 업무를 먼저 추가해 주세요.");
+                  }
+                }}
+              >
+                업무 상세
+              </button>
+              <button 
+                className={`nav-item ${currentScreen === 'progress' ? 'active' : ''}`}
+                onClick={() => setCurrentScreen("progress")}
+              >
+                진행 현황
+              </button>
+            </nav>
+          </header>
+
+          {/* Screen Content Router */}
+          <main class="main-content">
+            {currentScreen === "dashboard" && (
+              <DashboardView 
+                tasks={tasks}
+                stats={stats}
+                searchQuery={searchQuery}
+                setSearchQuery={setSearchQuery}
+                statusFilter={statusFilter}
+                setStatusFilter={setStatusFilter}
+                onSelectTask={(id) => {
+                  setSelectedTaskId(id);
+                  setCurrentScreen("detail");
+                }}
+                onNavigateToAdd={() => setCurrentScreen("ai-add")}
+              />
+            )}
+            
+            {currentScreen === "ai-add" && (
+              <AIAddTaskView 
+                onAddTask={(task) => {
+                  handleAddTask(task);
+                  setCurrentScreen("detail"); // Route to detail screen as next step
+                }}
+                onCancel={() => setCurrentScreen("dashboard")}
+              />
+            )}
+
+            {currentScreen === "detail" && (
+              <TaskDetailView 
+                task={tasks.find(t => t.id === selectedTaskId)}
+                onUpdate={handleUpdateTask}
+                onDelete={handleDeleteTask}
+                onNavigateToProgress={() => setCurrentScreen("progress")}
+                onBack={() => setCurrentScreen("dashboard")}
+              />
+            )}
+
+            {currentScreen === "progress" && (
+              <ProgressView 
+                tasks={tasks}
+                stats={stats}
+                onNavigateToDashboard={() => setCurrentScreen("dashboard")}
+              />
+            )}
+          </main>
+
+          {/* Global Footer */}
+          <footer class="footer">
+            <p>© 2026 AI 업무관리 서비스 Prototype (대학 행정지원 시제품). All rights reserved.</p>
+          </footer>
+        </div>
+      );
+    }
+
+    // ==========================================
+    // 1. Dashboard View
+    // ==========================================
+    function DashboardView({ tasks, stats, searchQuery, setSearchQuery, statusFilter, setStatusFilter, onSelectTask, onNavigateToAdd }) {
+      
+      // Filter & Search Logic
+      const filteredTasks = useMemo(() => {
+        return tasks.filter(task => {
+          // Status check
+          const matchesStatus = statusFilter === "전체" || task.status === statusFilter;
+          // Search query check
+          const matchesSearch = 
+            task.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+            task.assignee.toLowerCase().includes(searchQuery.toLowerCase());
+            
+          return matchesStatus && matchesSearch;
+        });
+      }, [tasks, searchQuery, statusFilter]);
+
+      return (
+        <div>
+          {/* Header */}
+          <div class="page-header">
+            <div class="page-title-group">
+              <h1>업무 대시보드</h1>
+              <p>분산된 업무를 한 눈에 파악하고 효율적으로 진행해 보세요.</p>
+            </div>
+            <button class="btn btn-primary" onClick={onNavigateToAdd}>
+              <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{marginRight: '4px'}}>
+                <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+              </svg>
+              AI 업무 추가하기
+            </button>
+          </div>
+
+          {/* Metrics Panel */}
+          <div class="dashboard-metrics">
+            <div class="metric-card">
+              <div>
+                <div class="metric-label">전체 업무 수</div>
+                <div class="metric-value">{stats.total}건</div>
+              </div>
+              <div class="text-subtle">등록된 전체 행정 업무</div>
+            </div>
+
+            <div class="metric-card">
+              <div>
+                <div class="metric-label">대기 중 (해야함)</div>
+                <div class="metric-value" style={{color: 'var(--status-todo-text)'}}>{stats.todo}건</div>
+              </div>
+              <div class="text-subtle">시작 대기 업무</div>
+            </div>
+
+            <div class="metric-card">
+              <div>
+                <div class="metric-label">진행 중</div>
+                <div class="metric-value" style={{color: 'var(--status-doing-text)'}}>{stats.doing}건</div>
+              </div>
+              <div class="text-subtle">실시간 작업 진행 중</div>
+            </div>
+
+            <div class="metric-card">
+              <div>
+                <div class="metric-label">
+                  <span>완료율</span>
+                  <span style={{color: 'var(--status-done-text)', fontWeight: 'bold'}}>{stats.completionRate}%</span>
+                </div>
+                <div class="metric-value" style={{color: 'var(--status-done-text)'}}>{stats.done}건</div>
+              </div>
+              <div class="metric-progress-bar">
+                <div class="metric-progress-fill" style={{width: `${stats.completionRate}%`}}></div>
+              </div>
+            </div>
+          </div>
+
+          {/* Filters Control Panel */}
+          <div class="filter-panel">
+            <div class="search-wrapper">
+              <svg class="search-icon-svg" viewBox="0 0 16 16">
+                <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/>
+              </svg>
+              <input 
+                type="text" 
+                class="search-input" 
+                placeholder="업무명 또는 담당자 검색..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+            
+            <div class="status-tabs">
+              {["전체", "해야함", "진행중", "완료"].map(tabName => (
+                <button 
+                  key={tabName}
+                  className={`status-tab ${statusFilter === tabName ? 'active' : ''}`}
+                  onClick={() => setStatusFilter(tabName)}
+                >
+                  {tabName}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Task List Table */}
+          <div class="task-table-container">
+            {filteredTasks.length > 0 ? (
+              <table class="task-table">
+                <thead>
+                  <tr>
+                    <th style={{width: '35%'}}>업무명</th>
+                    <th style={{width: '15%'}}>마감일 (D-Day)</th>
+                    <th style={{width: '15%'}}>담당자</th>
+                    <th style={{width: '15%'}}>우선순위</th>
+                    <th style={{width: '15%'}}>상태</th>
+                    <th style={{width: '5%', textAlign: 'center'}}>상세</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredTasks.map(task => {
+                    const dday = getDDayInfo(task.dueDate);
+                    return (
+                      <tr key={task.id} class="task-row" onClick={() => onSelectTask(task.id)}>
+                        <td>
+                          <div class="task-title">{task.title}</div>
+                          <div class="text-subtle" style={{marginTop: '2px', display: 'flex', gap: '8px'}}>
+                            <span>출처: {task.source || "미지정"}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <span style={{marginRight: '6px'}}>{task.dueDate}</span>
+                          {task.status !== "완료" ? (
+                            <span class={`dday-badge ${dday.class}`}>{dday.text}</span>
+                          ) : (
+                            <span class="dday-badge dday-safe" style={{backgroundColor: '#e6f4ea', color: '#137333'}}>완료</span>
+                          )}
+                        </td>
+                        <td class="text-subtle">{task.assignee}</td>
+                        <td>
+                          <span className={`badge ${
+                            task.priority === '높음' ? 'badge-high' :
+                            task.priority === '보통' ? 'badge-medium' : 'badge-low'
+                          }`}>
+                            {task.priority}
+                          </span>
+                        </td>
+                        <td>
+                          <span className={`badge ${
+                            task.status === '해야함' ? 'badge-todo' :
+                            task.status === '진행중' ? 'badge-doing' : 'badge-done'
+                          }`}>
+                            {task.status}
+                          </span>
+                        </td>
+                        <td style={{textAlign: 'center'}}>
+                          <svg width="18" height="18" fill="var(--text-muted)" viewBox="0 0 16 16">
+                            <path fill-rule="evenodd" d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z"/>
+                          </svg>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            ) : (
+              <div class="empty-state">
+                <svg viewBox="0 0 16 16">
+                  <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
+                  <path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 4.995z"/>
+                </svg>
+                <h3>검색되거나 일치하는 업무가 없습니다</h3>
+                <p>필터를 변경하거나 새로운 AI 업무를 추가해 보세요.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ==========================================
+    // 2. AI Task Add View
+    // ==========================================
+    function AIAddTaskView({ onAddTask, onCancel }) {
+      const [noticeText, setNoticeText] = useState("");
+      
+      // Fields state populated by AI
+      const [fields, setFields] = useState({
+        title: "",
+        dueDate: "",
+        assignee: "",
+        priority: "보통",
+        submissionMethod: "",
+        source: "",
+        memo: ""
+      });
+
+      const [isAnalyzed, setIsAnalyzed] = useState(false);
+      const [hasModifiedAfterAnalysis, setHasModifiedAfterAnalysis] = useState(false);
+
+      // Seed text scenario for easy user trial
+      const handleLoadExample = () => {
+        setNoticeText(
+          "안녕하세요. 기획처 김철수입니다.\n" +
+          "2026년 대학혁신지원사업 성과보고서 제출을 요청드립니다.\n" +
+          "- 제출 기한: 2026-07-10 17:00까지\n" +
+          "- 담당자: 이영희 (내선 1234)\n" +
+          "- 제출 방법: 기획처 이메일 제출 (planning@univ.ac.kr)\n" +
+          "- 우선순위: 높음\n" +
+          "* 기한 엄수 부탁드립니다."
+        );
+      };
+
+      // Run Mock AI Analysis notice parsing
+      const handleAIAnalyze = () => {
+        if (!noticeText.trim()) {
+          alert("공지사항 또는 이메일 텍스트 내용을 입력해 주세요.");
+          return;
+        }
+        const result = mockAnalyzeNotice(noticeText);
+        setFields(result);
+        setIsAnalyzed(true);
+        setHasModifiedAfterAnalysis(false);
+
+        // Flash/pulse animation wrapper triggers automatically via class
+      };
+
+      const handleFieldChange = (e) => {
+        const { name, value } = e.target;
+        setFields(prev => ({ ...prev, [name]: value }));
+        if (isAnalyzed) {
+          setHasModifiedAfterAnalysis(true);
+        }
+      };
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        if (!fields.title.trim()) {
+          alert("업무명은 필수 항목입니다. AI 분석을 실행하거나 수동으로 적어 주세요.");
+          return;
+        }
+        onAddTask(fields);
+      };
+
+      return (
+        <div>
+          {/* Header */}
+          <div class="page-header">
+            <div class="page-title-group">
+              <h1>AI 업무 추가</h1>
+              <p>공지사항이나 메일 본문을 입력하면 AI가 핵심 행정 정보를 추출해 줍니다.</p>
+            </div>
+            <button class="btn btn-secondary" onClick={onCancel}>
+              돌아가기
+            </button>
+          </div>
+
+          <div class="ai-view-layout">
+            {/* Left Panel: Text input */}
+            <div class="panel-card">
+              <div class="panel-title">
+                <svg width="18" height="18" fill="var(--primary-color)" viewBox="0 0 16 16">
+                  <path d="M9.5 2a.5.5 0 0 1 1 0v11a.5.5 0 0 1-1 0V2zM6 5.5a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 0 1h-7a.5.5 0 0 1-.5-.5zm0 5a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 0 1h-7a.5.5 0 0 1-.5-.5zM2 11.5a.5.5 0 0 1 .5-.5h1.5a.5.5 0 0 1 0 1h-1.5a.5.5 0 0 1-.5-.5zm0-4a.5.5 0 0 1 .5-.5h1.5a.5.5 0 0 1 0 1h-1.5a.5.5 0 0 1-.5-.5zm0-4a.5.5 0 0 1 .5-.5h1.5a.5.5 0 0 1 0 1h-1.5a.5.5 0 0 1-.5-.5z"/>
+                </svg>
+                공지/메일 내용 입력
+              </div>
+              
+              <textarea 
+                class="notice-textarea"
+                placeholder="여기에 학교 공지사항 텍스트나 기획처, 학생처 등에서 발송된 메일 본문을 붙여넣으세요..."
+                value={noticeText}
+                onChange={(e) => setNoticeText(e.target.value)}
+              ></textarea>
+              
+              <div class="button-bar-inline">
+                <button class="btn btn-secondary" onClick={handleLoadExample}>
+                  공지사항 예시 입력
+                </button>
+                <button class="btn btn-primary" onClick={handleAIAnalyze} style={{flex: '1'}}>
+                  <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{marginRight: '6px'}}>
+                    <path d="M11.536 14.01A8.47 8.47 0 0 1 8 15.001A8.5 8.5 0 1 1 15 8a8.47 8.47 0 0 1-1.001 4.536L12.929 11.46A6.5 6.5 0 1 0 6.54 12.93l1.07 1.08zm-1.085-3.327a3.5 3.5 0 1 1-1.89-5.385l1.08 1.078a1.5 1.5 0 1 0 1.888 5.385l-1.078-1.078z"/>
+                  </svg>
+                  AI 분석하기
+                </button>
+              </div>
+            </div>
+
+            {/* Right Panel: Analyzed form output */}
+            <form class="panel-card" onSubmit={handleSubmit}>
+              <div class="panel-title">
+                <svg width="18" height="18" fill="var(--primary-color)" viewBox="0 0 16 16">
+                  <path d="M12.854.146a.5.5 0 0 0-.707 0L10.5 1.793 14.207 5.5l1.647-1.646a.5.5 0 0 0 0-.708l-3-3zm.646 6.061L9.793 2.5 3.293 9H3.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.207l6.707-6.707zM0 13.687V16h2.313l6.5-6.5-2.313-2.314-6.5 6.5zm2 1.25H1.375v-.625L7.293 8.375l.625.625L2 14.938z"/>
+                </svg>
+                <span>AI 업무 분석 결과 {isAnalyzed && <span style={{fontSize: '0.8rem', color: 'var(--primary-color)', fontWeight: 'bold'}}>(추출 완료)</span>}</span>
+              </div>
+
+              <div class="form-grid">
+                <div class="form-group form-field-full">
+                  <label>업무명</label>
+                  <input 
+                    type="text" 
+                    name="title"
+                    className={`form-input ${(isAnalyzed && !hasModifiedAfterAnalysis) ? 'preview-highlight' : ''}`}
+                    placeholder="AI로 자동 생성되거나 수정 가능합니다."
+                    value={fields.title}
+                    onChange={handleFieldChange}
+                    required
+                  />
+                </div>
+
+                <div class="form-group">
+                  <label>마감일</label>
+                  <input 
+                    type="date" 
+                    name="dueDate"
+                    className={`form-input ${(isAnalyzed && !hasModifiedAfterAnalysis) ? 'preview-highlight' : ''}`}
+                    value={fields.dueDate}
+                    onChange={handleFieldChange}
+                  />
+                </div>
+
+                <div class="form-group">
+                  <label>담당자</label>
+                  <input 
+                    type="text" 
+                    name="assignee"
+                    className={`form-input ${(isAnalyzed && !hasModifiedAfterAnalysis) ? 'preview-highlight' : ''}`}
+                    placeholder="예: 이영희"
+                    value={fields.assignee}
+                    onChange={handleFieldChange}
+                  />
+                </div>
+
+                <div class="form-group">
+                  <label>우선순위</label>
+                  <select 
+                    name="priority"
+                    className={`form-select ${(isAnalyzed && !hasModifiedAfterAnalysis) ? 'preview-highlight' : ''}`}
+                    value={fields.priority}
+                    onChange={handleFieldChange}
+                  >
+                    <option value="높음">높음</option>
+                    <option value="보통">보통</option>
+                    <option value="낮음">낮음</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label>출처</label>
+                  <input 
+                    type="text" 
+                    name="source"
+                    className={`form-input ${(isAnalyzed && !hasModifiedAfterAnalysis) ? 'preview-highlight' : ''}`}
+                    placeholder="예: 공지사항 (기획처)"
+                    value={fields.source}
+                    onChange={handleFieldChange}
+                  />
+                </div>
+
+                <div class="form-group form-field-full">
+                  <label>제출방법</label>
+                  <input 
+                    type="text" 
+                    name="submissionMethod"
+                    className={`form-input ${(isAnalyzed && !hasModifiedAfterAnalysis) ? 'preview-highlight' : ''}`}
+                    placeholder="예: 기획처 이메일 제출"
+                    value={fields.submissionMethod}
+                    onChange={handleFieldChange}
+                  />
+                </div>
+
+                <div class="form-group form-field-full">
+                  <label>추가 메모</label>
+                  <textarea 
+                    name="memo"
+                    className={`form-textarea ${(isAnalyzed && !hasModifiedAfterAnalysis) ? 'preview-highlight' : ''}`}
+                    placeholder="기타 업무 수행을 위한 간단한 사항을 기재하세요."
+                    value={fields.memo}
+                    onChange={handleFieldChange}
+                  ></textarea>
+                </div>
+              </div>
+
+              <button type="submit" class="btn btn-primary" style={{width: '100%', marginTop: '1rem'}}>
+                저장 및 업무 상세 보기
+              </button>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
+    // ==========================================
+    // 3. Task Detail View
+    // ==========================================
+    function TaskDetailView({ task, onUpdate, onDelete, onNavigateToProgress, onBack }) {
+      if (!task) {
+        return (
+          <div class="empty-state">
+            <h3>선택된 업무 정보가 없습니다.</h3>
+            <button class="btn btn-primary" onClick={onBack}>대시보드로 돌아가기</button>
+          </div>
+        );
+      }
+
+      // States for editable inputs
+      const [status, setStatus] = useState(task.status);
+      const [priority, setPriority] = useState(task.priority);
+      const [memo, setMemo] = useState(task.memo);
+      const [hasSaved, setHasSaved] = useState(false);
+
+      // Keep details state in sync when the task changes
+      useEffect(() => {
+        setStatus(task.status);
+        setPriority(task.priority);
+        setMemo(task.memo);
+        setHasSaved(false);
+      }, [task]);
+
+      const handleSave = () => {
+        onUpdate(task.id, { status, priority, memo });
+        setHasSaved(true);
+        setTimeout(() => setHasSaved(false), 2000);
+      };
+
+      const dday = getDDayInfo(task.dueDate);
+
+      return (
+        <div class="detail-card">
+          {/* Header */}
+          <div class="page-header">
+            <button class="btn btn-secondary" onClick={onBack}>
+              <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{marginRight: '6px', transform: 'rotate(180deg)'}}>
+                <path fill-rule="evenodd" d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z"/>
+              </svg>
+              대시보드 목록
+            </button>
+            <div style={{display: 'flex', gap: '0.5rem'}}>
+              <button class="btn btn-danger" onClick={() => {
+                if (confirm(`'${task.title}' 업무를 정말로 삭제하시겠습니까?`)) {
+                  onDelete(task.id);
+                }
+              }}>
+                업무 삭제
+              </button>
+              <button class="btn btn-primary" onClick={onNavigateToProgress}>
+                진행 현황 보기
+                <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style={{marginLeft: '4px'}}>
+                  <path fill-rule="evenodd" d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="panel-card">
+            {/* Title block */}
+            <div class="detail-header">
+              <div>
+                <span class="text-subtle" style={{fontSize: '0.8rem', fontWeight: '600'}}>업무 ID: #{task.id}</span>
+                <div class="detail-title">{task.title}</div>
+              </div>
+              <div>
+                {status !== "완료" ? (
+                  <span class={`dday-badge ${dday.class}`} style={{fontSize: '0.9rem', padding: '0.35rem 0.85rem'}}>{dday.text}</span>
+                ) : (
+                  <span class="dday-badge dday-safe" style={{fontSize: '0.9rem', padding: '0.35rem 0.85rem', backgroundColor: '#e6f4ea', color: '#137333'}}>완료됨</span>
+                )}
+              </div>
+            </div>
+
+            <div class="ai-view-layout" style={{gridTemplateColumns: '1.2fr 0.8fr'}}>
+              {/* Left Side: Read-only info fields */}
+              <div class="detail-grid" style={{gridTemplateColumns: '1fr 1fr'}}>
+                <div class="detail-info-block">
+                  <div class="detail-info-label">담당자</div>
+                  <div class="detail-info-value">{task.assignee || "미지정"}</div>
+                </div>
+
+                <div class="detail-info-block">
+                  <div class="detail-info-label">마감일자</div>
+                  <div class="detail-info-value">{task.dueDate || "미지정"}</div>
+                </div>
+
+                <div class="detail-info-block" style={{gridColumn: 'span 2'}}>
+                  <div class="detail-info-label">제출방법</div>
+                  <div class="detail-info-value">{task.submissionMethod || "정보 없음"}</div>
+                </div>
+
+                <div class="detail-info-block">
+                  <div class="detail-info-label">업무 출처</div>
+                  <div class="detail-info-value">{task.source || "직접 입력"}</div>
+                </div>
+
+                <div class="detail-info-block">
+                  <div class="detail-info-label">최종수정일</div>
+                  <div class="detail-info-value">{task.updatedAt}</div>
+                </div>
+              </div>
+
+              {/* Right Side: Editable fields */}
+              <div style={{display: 'flex', flexDirection: 'column', gap: '1rem'}}>
+                <div class="form-group">
+                  <label>업무 진행 상태</label>
+                  <select 
+                    class="form-select" 
+                    value={status} 
+                    onChange={(e) => setStatus(e.target.value)}
+                  >
+                    <option value="해야함">해야함</option>
+                    <option value="진행중">진행중</option>
+                    <option value="완료">완료</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label>우선순위</label>
+                  <select 
+                    class="form-select" 
+                    value={priority} 
+                    onChange={(e) => setPriority(e.target.value)}
+                  >
+                    <option value="높음">높음</option>
+                    <option value="보통">보통</option>
+                    <option value="낮음">낮음</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label>수행 메모</label>
+                  <textarea 
+                    class="form-textarea" 
+                    style={{height: '110px'}}
+                    value={memo} 
+                    onChange={(e) => setMemo(e.target.value)}
+                    placeholder="수정 가능한 메모 공간입니다."
+                  ></textarea>
+                </div>
+
+                <button class="btn btn-primary" onClick={handleSave} style={{marginTop: '0.5rem'}}>
+                  {hasSaved ? (
+                    <span>
+                      <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16" style={{marginRight: '6px', verticalAlign: 'middle'}}>
+                        <path d="M12.736 14H3.264a2 2 0 0 1-1.89-1.373L.21 8.52a2 2 0 0 1 .16-1.579L1.936 4.09A2 2 0 0 1 3.826 3h8.348a2 2 0 0 1 1.89 1.09l1.566 2.851a2 2 0 0 1 .16 1.58l-1.164 4.107A2 2 0 0 1 12.736 14zM3.826 4a1 1 0 0 0-.945.545L1.315 7.396a1 1 0 0 0-.08.79l1.164 4.107a1 1 0 0 0 .945.707h9.472a1 1 0 0 0 .945-.707l1.164-4.107a1 1 0 0 0-.08-.79L13.12 4.545A1 1 0 0 0 12.174 4H3.826z"/>
+                        <path d="M10.97 4.97a.75.75 0 0 1 1.071 1.05l-3.992 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.235.235 0 0 1 .02-.022z"/>
+                      </svg>
+                      저장 완료!
+                    </span>
+                  ) : "정보 저장하기"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ==========================================
+    // 4. Progress View
+    // ==========================================
+    function ProgressView({ tasks, stats, onNavigateToDashboard }) {
+      
+      // Calculate D-Day Buckets:
+      // Overdue: D-Day <= -1 (status is not Done)
+      // Imminent: D-Day between 0 and 3 (status is not Done)
+      // Normal: D-Day >= 4 (status is not Done)
+      // Completed: status is Done
+      const ddayBuckets = useMemo(() => {
+        let overdue = 0;
+        let imminent = 0;
+        let normal = 0;
+        let doneCount = 0;
+
+        tasks.forEach(t => {
+          if (t.status === "완료") {
+            doneCount++;
+          } else {
+            const dday = getDDayInfo(t.dueDate);
+            if (dday.value < 0) {
+              overdue++;
+            } else if (dday.value <= 3) {
+              imminent++;
+            } else {
+              normal++;
+            }
+          }
+        });
+
+        const totalUnfinished = overdue + imminent + normal;
+        return { overdue, imminent, normal, doneCount, totalUnfinished };
+      }, [tasks]);
+
+      // Draw SVG Donut calculations
+      const donutData = useMemo(() => {
+        const total = stats.total || 1; // avoid divide by zero
+        const todoPct = (stats.todo / total) * 100;
+        const doingPct = (stats.doing / total) * 100;
+        const donePct = (stats.done / total) * 100;
+
+        // Cumulative values for SVG circle dasharrays
+        // Radius of circle = 40, Circumference = 2 * PI * 40 ≈ 251.2
+        const circ = 251.2;
+        
+        const todoStroke = (stats.todo / total) * circ;
+        const doingStroke = (stats.doing / total) * circ;
+        const doneStroke = (stats.done / total) * circ;
+
+        return {
+          todoPct, doingPct, donePct,
+          todoStroke, doingStroke, doneStroke,
+          circ
+        };
+      }, [stats]);
+
+      // Calculate heights for the bar chart representing D-Day buckets
+      const barHeights = useMemo(() => {
+        const maxVal = Math.max(
+          ddayBuckets.overdue,
+          ddayBuckets.imminent,
+          ddayBuckets.normal,
+          ddayBuckets.doneCount,
+          1 // avoid divide by 0
+        );
+        return {
+          overdue: (ddayBuckets.overdue / maxVal) * 140,
+          imminent: (ddayBuckets.imminent / maxVal) * 140,
+          normal: (ddayBuckets.normal / maxVal) * 140,
+          doneCount: (ddayBuckets.doneCount / maxVal) * 140
+        };
+      }, [ddayBuckets]);
+
+      return (
+        <div>
+          {/* Header */}
+          <div class="page-header">
+            <div class="page-title-group">
+              <h1>업무 진행 현황</h1>
+              <p>전체 업무 완료율 및 분류별 통계를 한눈에 모니터링 합니다.</p>
+            </div>
+            <button class="btn btn-secondary" onClick={onNavigateToDashboard}>
+              대시보드로 돌아가기
+            </button>
+          </div>
+
+          <div class="stats-grid">
+            {/* Card 1: Completed Rate Circular Gauge */}
+            <div class="stats-card">
+              <div class="stats-card-title">전체 업무 완료율</div>
+              
+              <div class="donut-chart-container">
+                <svg width="200" height="200" viewBox="0 0 100 100" style={{transform: 'rotate(-90deg)'}}>
+                  <circle cx="50" cy="50" r="40" class="donut-ring" style={{strokeWidth: 6}} />
+                  <circle 
+                    cx="50" 
+                    cy="50" 
+                    r="40" 
+                    class="donut-segment" 
+                    style={{
+                      stroke: 'var(--status-done-text)',
+                      strokeWidth: 6,
+                      strokeDasharray: '251.2',
+                      strokeDashoffset: 251.2 - (251.2 * stats.completionRate) / 100
+                    }} 
+                  />
+                </svg>
+                <div class="donut-text-center">
+                  <div class="donut-number">{stats.completionRate}%</div>
+                  <div class="donut-label">완료 처리</div>
+                </div>
+              </div>
+
+              <div style={{marginTop: '2rem', display: 'grid', gridTemplateColumns: '1fr 1fr', width: '100%', gap: '1rem'}}>
+                <div class="detail-info-block" style={{textAlign: 'center'}}>
+                  <div class="detail-info-label">완료 업무</div>
+                  <div class="detail-info-value" style={{color: 'var(--status-done-text)', fontSize: '1.25rem'}}>{stats.done}건</div>
+                </div>
+                <div class="detail-info-block" style={{textAlign: 'center'}}>
+                  <div class="detail-info-label">미완료 업무</div>
+                  <div class="detail-info-value" style={{color: 'var(--status-todo-text)', fontSize: '1.25rem'}}>{stats.todo + stats.doing}건</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Card 2: Status Distribution Donut Chart */}
+            <div class="stats-card">
+              <div class="stats-card-title">진행 상태별 분포</div>
+
+              <div class="donut-chart-container">
+                <svg width="200" height="200" viewBox="0 0 100 100" style={{transform: 'rotate(-90deg)'}}>
+                  <circle cx="50" cy="50" r="40" class="donut-ring" />
+                  
+                  {/* segment done */}
+                  {stats.done > 0 && (
+                    <circle 
+                      cx="50" cy="50" r="40" 
+                      class="donut-segment"
+                      style={{
+                        stroke: 'var(--status-done-text)',
+                        strokeDasharray: `${donutData.doneStroke} ${donutData.circ - donutData.doneStroke}`,
+                        strokeDashoffset: 0
+                      }}
+                    />
+                  )}
+                  
+                  {/* segment doing */}
+                  {stats.doing > 0 && (
+                    <circle 
+                      cx="50" cy="50" r="40" 
+                      class="donut-segment"
+                      style={{
+                        stroke: 'var(--status-doing-text)',
+                        strokeDasharray: `${donutData.doingStroke} ${donutData.circ - donutData.doingStroke}`,
+                        strokeDashoffset: -donutData.doneStroke
+                      }}
+                    />
+                  )}
+
+                  {/* segment todo */}
+                  {stats.todo > 0 && (
+                    <circle 
+                      cx="50" cy="50" r="40" 
+                      class="donut-segment"
+                      style={{
+                        stroke: 'var(--status-todo-text)',
+                        strokeDasharray: `${donutData.todoStroke} ${donutData.circ - donutData.todoStroke}`,
+                        strokeDashoffset: -(donutData.doneStroke + donutData.doingStroke)
+                      }}
+                    />
+                  )}
+                </svg>
+                <div class="donut-text-center">
+                  <div class="donut-number">{stats.total}</div>
+                  <div class="donut-label">전체 건수</div>
+                </div>
+              </div>
+
+              <div class="chart-legend">
+                <div class="legend-item">
+                  <div class="legend-color todo"></div>
+                  <div class="legend-text">해야함</div>
+                  <div class="legend-count">{stats.todo}건</div>
+                </div>
+                <div class="legend-item">
+                  <div class="legend-color doing"></div>
+                  <div class="legend-text">진행중</div>
+                  <div class="legend-count">{stats.doing}건</div>
+                </div>
+                <div class="legend-item">
+                  <div class="legend-color done"></div>
+                  <div class="legend-text">완료</div>
+                  <div class="legend-count">{stats.done}건</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Card 3: D-Day / Target Deadline Range Bar Chart */}
+            <div class="stats-card" style={{gridColumn: 'span 2'}}>
+              <div class="stats-card-title">D-Day 범위별 업무 구분</div>
+
+              <div class="dday-chart-wrapper">
+                {/* Bar 1: Overdue */}
+                <div class="bar-container">
+                  <div class="bar-fill" style={{height: `${barHeights.overdue}px`, background: 'var(--dday-alert-text)'}}>
+                    <div class="bar-value">{ddayBuckets.overdue}</div>
+                  </div>
+                  <div class="bar-label" style={{color: 'var(--dday-alert-text)'}}>마감 지남</div>
+                </div>
+
+                {/* Bar 2: Imminent */}
+                <div class="bar-container">
+                  <div class="bar-fill" style={{height: `${barHeights.imminent}px`, background: 'var(--dday-warning-text)'}}>
+                    <div class="bar-value">{ddayBuckets.imminent}</div>
+                  </div>
+                  <div class="bar-label" style={{color: 'var(--dday-warning-text)'}}>임박 (3일 내)</div>
+                </div>
+
+                {/* Bar 3: Normal */}
+                <div class="bar-container">
+                  <div class="bar-fill" style={{height: `${barHeights.normal}px`, background: 'var(--primary-color)'}}>
+                    <div class="bar-value">{ddayBuckets.normal}</div>
+                  </div>
+                  <div class="bar-label" style={{color: 'var(--primary-color)'}}>여유 (4일 이상)</div>
+                </div>
+
+                {/* Bar 4: Completed */}
+                <div class="bar-container">
+                  <div class="bar-fill" style={{height: `${barHeights.doneCount}px`, background: 'var(--status-done-text)'}}>
+                    <div class="bar-value">{ddayBuckets.doneCount}</div>
+                  </div>
+                  <div class="bar-label" style={{color: 'var(--status-done-text)'}}>완료됨</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card-footer-buttons">
+            <button class="btn btn-primary" onClick={onNavigateToDashboard}>
+              대시보드로 이동
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // Mount to root DOM node
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>
